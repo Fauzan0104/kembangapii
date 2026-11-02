@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Semangat Manda</title>
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #020617, #0b0f19, #111827);
+            font-family: sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+
+        #click-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 9999;
+            cursor: pointer;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #initial-ui {
+            position: absolute;
+            bottom: 12%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 30;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: opacity 0.3s ease-out;
+            pointer-events: none; 
+        }
+
+        .instruction-text {
+            color: white;
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            animation: pulse-glow 1.5s infinite alternate;
+            text-shadow: 0 0 10px #fff, 0 0 20px #00f2fe, 0 0 30px #0072ff;
+            font-weight: bold;
+        }
+
+        @keyframes pulse-glow {
+            from { opacity: 0.7; transform: translateY(0); }
+            to { opacity: 1; transform: translateY(-5px); }
+        }
+
+        .pipe-svg {
+            width: 55px;
+            height: auto;
+            filter: drop-shadow(0 0 10px rgba(0, 114, 255, 0.6));
+        }
+    </style>
+</head>
+<body>
+
+    <div id="click-overlay" onclick="launch()"></div>
+    <canvas id="canvas-container"></canvas>
+
+    <div id="initial-ui">
+        <div class="instruction-text">Klik Di Mana Saja</div>
+        <svg class="pipe-svg" viewBox="0 0 100 200" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <linearGradient id="pipeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#003366" />
+                    <stop offset="50%" stop-color="#0072ff" />
+                    <stop offset="100%" stop-color="#003366" />
+                </linearGradient>
+            </defs>
+            <rect x="45" y="120" width="10" height="80" fill="#0b1329" />
+            <path d="M 20 120 C 20 80, 40 40, 50 10 C 60 40, 80 80, 80 120 Z" fill="url(#pipeGrad)" stroke="#00f2fe" stroke-width="2"/>
+            <line x1="35" y1="120" x2="50" y2="30" stroke="#00f2fe" stroke-width="1" opacity="0.6"/>
+            <line x1="65" y1="120" x2="50" y2="30" stroke="#00f2fe" stroke-width="1" opacity="0.6"/>
+        </svg>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas-container');
+        const ctx = canvas.getContext('2d');
+        let cw, ch;
+
+        let appState = 'waiting'; 
+        let launchStartTime = 0;
+        const LAUNCH_DURATION = 200; 
+
+        function resize() {
+            cw = canvas.width = window.innerWidth;
+            ch = canvas.height = window.innerHeight;
+            if (appState === 'fireworks') {
+                generateShapePoints(); 
+            }
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- BINTANG ---
+        const stars = [];
+        const numStars = 120;
+        for (let i = 0; i < numStars; i++) {
+            stars.push({
+                x: Math.random() * cw,
+                y: Math.random() * ch,
+                r: Math.random() * 1.2 + 0.4,
+                alpha: Math.random(),
+                blinkRate: Math.random() * 0.015 + 0.003
+            });
+        }
+
+        function drawStars() {
+            ctx.clearRect(0, 0, cw, ch);
+            stars.forEach((star, index) => {
+                star.alpha += star.blinkRate;
+                if (star.alpha > 1 || star.alpha < 0.2) star.blinkRate *= -1;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha})`;
+                ctx.fill();
+
+                if (index % 12 === 0) {
+                    for (let j = index + 1; j < stars.length; j++) {
+                        let dx = star.x - stars[j].x;
+                        let dy = star.y - stars[j].y;
+                        let dist = Math.sqrt(dx*dx + dy*dy);
+                        if (dist < 85) {
+                            ctx.beginPath();
+                            ctx.moveTo(star.x, star.y);
+                            ctx.lineTo(stars[j].x, stars[j].y);
+                            ctx.strokeStyle = `rgba(180, 220, 255, ${0.12 - dist/750})`;
+                            ctx.lineWidth = 0.5;
+                            ctx.stroke();
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- PARTIKEL BEBAS ---
+        let particles = [];
+        const baseColors = ['#0072ff', '#00f2fe', '#38bdf8', '#60a5fa', '#93c5fd'];
+
+        class Particle {
+            constructor(x, y, isProjectile = false) {
+                this.x = x;
+                this.y = y;
+                this.isProjectile = isProjectile;
+                this.history = [];
+                this.historyLength = isProjectile ? 12 : 6;
+                
+                if (isProjectile) {
+                    this.vx = 0;
+                    this.vy = -(ch * 0.6) / (LAUNCH_DURATION / 16.66);
+                    this.color = '#ffffff';
+                    this.life = 1;
+                    this.size = 3;
+                } else {
+                    let angle = Math.random() * Math.PI * 2;
+                    let speed = Math.random() * 6 + 2;
+                    this.vx = Math.cos(angle) * speed;
+                    this.vy = Math.sin(angle) * speed;
+                    this.color = baseColors[Math.floor(Math.random() * baseColors.length)];
+                    this.life = 1;
+                    this.decay = Math.random() * 0.02 + 0.015;
+                    this.size = Math.random() * 2 + 1;
+                }
+            }
+
+            update() {
+                this.history.push({ x: this.x, y: this.y });
+                if (this.history.length > this.historyLength) this.history.shift();
+
+                if (!this.isProjectile) {
+                    this.vy += 0.12; 
+                    this.vx *= 0.97; 
+                    this.vy *= 0.97;
+                    this.life -= this.decay;
+                }
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            draw() {
+                if (this.history.length < 2) return;
+                ctx.beginPath();
+                ctx.moveTo(this.history[0].x, this.history[0].y);
+                for (let i = 1; i < this.history.length; i++) {
+                    ctx.lineTo(this.history[i].x, this.history[i].y);
+                }
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = this.size;
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = this.color;
+                ctx.globalAlpha = this.life;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // --- PARTIKEL POLA ---
+        let shapeParticles = [];
+
+        class ShapeParticle {
+            constructor(tx, ty, isFlower = false) {
+                this.x = cw / 2 + (Math.random() - 0.5) * 100;
+                this.y = ch * 0.4 + (Math.random() - 0.5) * 100;
+                this.tx = tx;
+                this.ty = ty;
+                this.isFlower = isFlower;
+                
+                if (isFlower) {
+                    this.color = Math.random() > 0.5 ? '#2563eb' : '#60a5fa'; 
+                    this.size = Math.random() * 1 + 0.5; 
+                    this.maxAlpha = Math.random() * 0.45 + 0.35; 
+                } else {
+                    this.color = Math.random() > 0.2 ? '#ffffff' : '#00f2fe'; 
+                    this.size = Math.random() * 1.8 + 1.3; 
+                    this.maxAlpha = 1; 
+                }
+                
+                this.alpha = 0;
+                this.sparkle = Math.random() * 0.05 + 0.01;
+                this.sparkleDir = 1;
+            }
+
+            update() {
+                this.x += (this.tx - this.x) * 0.08;
+                this.y += (this.ty - this.y) * 0.08;
+
+                if (this.alpha < this.maxAlpha) this.alpha += 0.04;
+
+                this.x += (Math.random() - 0.5) * 0.7;
+                this.y += (Math.random() - 0.5) * 0.7;
+
+                this.alpha += this.sparkle * this.sparkleDir;
+                if (this.alpha > this.maxAlpha) { this.alpha = this.maxAlpha; this.sparkleDir = -1; }
+                if (this.alpha < this.maxAlpha * 0.4) { this.alpha = this.maxAlpha * 0.4; this.sparkleDir = 1; }
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.alpha;
+                ctx.shadowBlur = this.isFlower ? 4 : 15;
+                ctx.shadowColor = this.isFlower ? this.color : '#00f2fe';
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function generateShapePoints() {
+            shapeParticles = [];
+            
+            let scale = cw < 768 ? 0.55 : 1;
+            let centerX = cw / 2;
+            let centerY = ch * 0.45;
+
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = cw;
+            tempCanvas.height = ch;
+
+            // 1. Menggambar Background Bunga Matahari
+            let sunRadius = 240 * scale;
+            tempCtx.strokeStyle = '#ffffff';
+            tempCtx.lineWidth = 2.2;
+            
+            tempCtx.beginPath();
+            tempCtx.arc(centerX, centerY, sunRadius * 0.35, 0, Math.PI * 2);
+            tempCtx.stroke();
+
+            const numSunflowerPetals = 28;
+            for (let i = 0; i < numSunflowerPetals; i++) {
+                let angle = (i * Math.PI * 2) / numSunflowerPetals;
+                tempCtx.save();
+                tempCtx.translate(centerX, centerY);
+                tempCtx.rotate(angle);
+                tempCtx.beginPath();
+                tempCtx.moveTo(0, -sunRadius * 0.35);
+                tempCtx.quadraticCurveTo(sunRadius * 0.15, -sunRadius * 0.7, 0, -sunRadius);
+                tempCtx.quadraticCurveTo(-sunRadius * 0.15, -sunRadius * 0.7, 0, -sunRadius * 0.35);
+                tempCtx.stroke();
+                tempCtx.restore();
+            }
+
+            let sunImgData = tempCtx.getImageData(0, 0, cw, ch);
+            let stepBg = cw < 768 ? 4 : 5;
+            for (let y = 0; y < ch; y += stepBg) {
+                for (let x = 0; x < cw; x += stepBg) {
+                    let index = (y * cw + x) * 4;
+                    if (sunImgData.data[index + 3] > 128) {
+                        shapeParticles.push(new ShapeParticle(x, y, true));
+                    }
+                }
+            }
+
+            // Bersihkan temporary canvas untuk teks dan sketsa mawar bertangkai
+            tempCtx.clearRect(0, 0, cw, ch);
+
+            let fontSize = cw < 480 ? 60 : (cw < 768 ? 80 : 130); 
+            tempCtx.font = `bold ${fontSize}px 'Dancing Script', cursive`;
+            tempCtx.fillStyle = '#ffffff';
+            tempCtx.textAlign = 'center';
+            tempCtx.textBaseline = 'middle';
+
+            let lineSpacing = fontSize * 1.15; 
+            let textY1 = centerY - (lineSpacing / 2);
+            let textY2 = centerY + (lineSpacing / 2);
+
+            // Tulis Teks Baris 1 & 2 ("Semangat Manda")
+            tempCtx.fillText("Semangat", centerX, textY1);
+            tempCtx.fillText("Manda", centerX, textY2);
+
+            // Menghitung posisi huruf 'd' untuk menyamakan ketinggian (Y) bunga mawar
+            let mandaWidth = tempCtx.measureText("Manda").width;
+            let mandaStartX = centerX - (mandaWidth / 2);
+            
+            // Jarak horizontal diperlebar lebih jauh ke kanan dari huruf 'a' terakhir
+            let x_rose = mandaStartX + mandaWidth + (fontSize * 0.45); 
+            // Ketinggian Y disamakan persis dengan tinggi baris huruf 'd' (textY2)
+            let y_rose = textY2; 
+            let roseSize = fontSize * 0.35; 
+
+            // Fungsi Sketsa Mawar Bertangkai & Berdaun
+            function drawRoseWithStem(ctx, cx, cy, radius) {
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = Math.max(2.5, radius * 0.1);
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                // Tangkai bunga melengkung ke bawah
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.quadraticCurveTo(cx - radius * 0.3, cy + radius * 1.2, cx - radius * 0.1, cy + radius * 2.2);
+                ctx.stroke();
+
+                // Daun di tangkai kiri
+                ctx.beginPath();
+                ctx.moveTo(cx - radius * 0.12, cy + radius * 1.1);
+                ctx.quadraticCurveTo(cx - radius * 0.6, cy + radius * 1.0, cx - radius * 0.5, cy + radius * 1.4);
+                ctx.quadraticCurveTo(cx - radius * 0.3, cy + radius * 1.4, cx - radius * 0.12, cy + radius * 1.2);
+                ctx.stroke();
+
+                // Daun di tangkai kanan
+                ctx.beginPath();
+                ctx.moveTo(cx - radius * 0.08, cy + radius * 1.6);
+                ctx.quadraticCurveTo(cx + radius * 0.4, cy + radius * 1.6, cx + radius * 0.3, cy + radius * 1.9);
+                ctx.quadraticCurveTo(cx + radius * 0.15, cy + radius * 1.9, cx - radius * 0.05, cy + radius * 1.7);
+                ctx.stroke();
+
+                // Kepala Bunga Mawar (Kelopak Spiral Dalam)
+                let headY = cy - radius * 0.2;
+                ctx.beginPath();
+                for (let i = 0; i <= Math.PI * 3.5; i += 0.2) {
+                    let r = (i / (Math.PI * 3.5)) * (radius * 0.45);
+                    let px = cx + Math.cos(i) * r;
+                    let py = headY + Math.sin(i) * r;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.stroke();
+
+                // Kelopak Luar Mawar
+                ctx.beginPath();
+                ctx.arc(cx - radius*0.1, headY + radius*0.1, radius * 0.6, Math.PI * 0.1, Math.PI * 0.8);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(cx + radius*0.1, headY - radius*0.1, radius * 0.7, Math.PI * 1.1, Math.PI * 1.8);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(cx - radius*0.15, headY - radius*0.05, radius * 0.65, Math.PI * 0.6, Math.PI * 1.3);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(cx + radius*0.08, headY + radius*0.08, radius * 0.75, Math.PI * 1.7, Math.PI * 0.3);
+                ctx.stroke();
+            }
+
+            // Gambar mawar bertangkai dengan jarak lebih jauh dan tinggi sejajar huruf 'd'
+            drawRoseWithStem(tempCtx, x_rose, y_rose, roseSize);
+
+            // 3. Ekstrak Teks & Mawar Bertangkai Menjadi Partikel Terang
+            const imgData = tempCtx.getImageData(0, 0, cw, ch);
+            const step = cw < 768 ? 3 : 4; 
+            for (let y = 0; y < ch; y += step) {
+                for (let x = 0; x < cw; x += step) {
+                    let index = (y * cw + x) * 4;
+                    if (imgData.data[index + 3] > 128) { 
+                        shapeParticles.push(new ShapeParticle(x, y, false));
+                    }
+                }
+            }
+        }
+
+        function createExplosion(x, y, count = 100) {
+            for (let i = 0; i < count; i++) {
+                particles.push(new Particle(x, y, false));
+            }
+        }
+
+        let projectileParticle = null;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            drawStars();
+
+            if (appState === 'launching') {
+                let elapsed = Date.now() - launchStartTime;
+                let progress = elapsed / LAUNCH_DURATION;
+
+                if (progress >= 1) {
+                    appState = 'fireworks';
+                    createExplosion(cw / 2, ch * 0.45, 120);
+                    generateShapePoints();
+                    projectileParticle = null;
+                } else {
+                    if (!projectileParticle) {
+                        projectileParticle = new Particle(cw / 2, ch * 0.9, true);
+                    }
+                    let startY = ch * 0.9;
+                    let targetY = ch * 0.45;
+                    projectileParticle.y = startY - ((startY - targetY) * progress);
+                    projectileParticle.update();
+                    projectileParticle.draw();
+                }
+            }
+
+            if (appState === 'fireworks') {
+                if (Math.random() < 0.035) {
+                    let randX = Math.random() * cw;
+                    let randY = Math.random() * (ch * 0.65);
+                    createExplosion(randX, randY, Math.random() * 30 + 15);
+                }
+                shapeParticles.forEach(sp => {
+                    sp.update();
+                    sp.draw();
+                });
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.update();
+                p.draw();
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function launch() {
+            if (appState !== 'waiting') return;
+            
+            document.getElementById('click-overlay').style.display = 'none';
+            
+            const initialUI = document.getElementById('initial-ui');
+            initialUI.style.opacity = '0';
+            setTimeout(() => { initialUI.style.display = 'none'; }, 300);
+
+            appState = 'launching';
+            launchStartTime = Date.now();
+        }
+
+        animate();
+    </script>
+</body>
+</html>
